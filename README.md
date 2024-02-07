@@ -67,6 +67,5 @@ We welcome contributions of any kind and are open to feedback, bug-reports, and 
 ```bash
 git clone --recurse-submodules https://github.com/violetdenim/gsplat
 BUILD_NO_CUDA=1 pip install -e .[dev]
-```bash
-
+```
 
