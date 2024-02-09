@@ -1,3 +1,4 @@
+import copy
 import math
 import os
 import time
@@ -11,13 +12,19 @@ from gsplat.project_gaussians import _ProjectGaussians
 from gsplat.rasterize import _RasterizeGaussians
 from PIL import Image
 from torch import Tensor, optim
-import cv2
 
+import copy
+# import cv2
+from matplotlib import pyplot as plt
+
+import wandb as wb
+wb.login()
 
 class SimpleTrainer:
     """Trains random gaussians to fit an image."""
 
-    def __init__(self, gt_image: Tensor, num_points: int = 200, random=True):
+    def __init__(self, gt_image: Tensor, num_points: int = 200, random=True, \
+                 fixScale=False, fixPosition=False, fixColor=False, fixQuats=False, fixOpacities=False):
         self.device = torch.device("cuda:0")
         self.gt_image = gt_image.to(device=self.device)
         self.num_points = num_points
@@ -35,9 +42,9 @@ class SimpleTrainer:
         self.img_size = torch.tensor([self.W, self.H, 1], device=self.device)
         self.block = torch.tensor([BLOCK_X, BLOCK_Y, 1], device=self.device)
 
-        self._init_gaussians(random=random)
+        self._init_gaussians(random=random, fixScale=fixScale, fixPosition=fixPosition, fixColor=fixColor,fixQuats=fixQuats,fixOpacities=fixOpacities)
 
-    def _init_gaussians(self, random=True):
+    def _init_gaussians(self, random=True, fixScale=False, fixPosition=False, fixColor=False, fixQuats=False, fixOpacities=False):
         """Random gaussians"""
         # print(f"Random={random}")
         if random:
@@ -86,19 +93,20 @@ class SimpleTrainer:
         )
         self.background = torch.zeros(3, device=self.device)
 
-        self.means.requires_grad = True
-        self.scales.requires_grad = True
-        self.quats.requires_grad = True
-        self.rgbs.requires_grad = True
-        self.opacities.requires_grad = True
+        self.means.requires_grad = not fixPosition
+        self.scales.requires_grad = not fixScale
+        self.quats.requires_grad = not fixQuats
+        self.rgbs.requires_grad = not fixColor
+        self.opacities.requires_grad = not fixOpacities
         self.viewmat.requires_grad = False
 
-    def train(self, iterations: int = 1000, lr: float = 0.01, save_imgs: bool = False):
+    def train(self, iterations: int = 1000, lr: float = 0.01, save_imgs=True):
         optimizer = optim.Adam(
             [self.rgbs, self.means, self.scales, self.opacities, self.quats], lr
         )
         mse_loss = torch.nn.MSELoss()
         frames = []
+        losses = []
         times = [0] * 3  # project, rasterize, backward
         for iter in range(iterations):
             start = time.time()
@@ -133,40 +141,28 @@ class SimpleTrainer:
                 self.background,
             )
             torch.cuda.synchronize()
-            times[1] += time.time() - start
+            # times[1] += time.time() - start
             loss = mse_loss(out_img, self.gt_image)
             optimizer.zero_grad()
             start = time.time()
             loss.backward()
             torch.cuda.synchronize()
-            times[2] += time.time() - start
+            # times[2] += time.time() - start
             optimizer.step()
             print(f"Iteration {iter + 1}/{iterations}, Loss: {loss.item()}")
             frame = (out_img.detach().cpu().numpy() * 255).astype(np.uint8)
 
             if save_imgs and iter % 5 == 0:
                 frames.append(frame)
-            if iter == 0:
-                cv2.imwrite("test.jpg", frame * 255)
-                # exit(0)
-
-
-        print("Resulting params: ")
-        print(self.means)
-        print(self.scales)
+            losses.append(loss.item())
+            wb.log({"loss": loss})
+            # if iter == 0:
+            #     cv2.imwrite("test.jpg", frame * 255)
+            # exit(0)
         if save_imgs:
-            # save them as a gif with PIL
-            frames = [Image.fromarray(frame) for frame in frames]
-            out_dir = os.path.join(os.getcwd(), "renders")
-            os.makedirs(out_dir, exist_ok=True)
-            frames[0].save(
-                f"{out_dir}/training.gif",
-                save_all=True, append_images=frames[1:],
-                optimize=False, duration=5, loop=0,
-            )
-        print(f"Total(s):\nProject: {times[0]:.3f}, Rasterize: {times[1]:.3f}, Backward: {times[2]:.3f}")
-        print(f"Per step(s):\nProject: {times[0]/iterations:.5f}, Rasterize: {times[1]/iterations:.5f}, Backward: {times[2]/iterations:.5f}")
-
+            data = np.stack([frame.transpose(2, 0, 1) for frame in frames], axis=0)
+            wb.log({"frames": wb.Video(data)})
+        return frames, losses
 
 def image_path_to_tensor(image_path: Path):
     import torchvision.transforms as transforms
@@ -178,25 +174,63 @@ def image_path_to_tensor(image_path: Path):
 
 
 def main(
-    height: int = 256,
-    width: int = 256,
+    experiment_label: str = "gsplat",
     num_points: int = 100,#100000,
     save_imgs: bool = True,
     img_path: Optional[Path] = None,
     iterations: int = 1000,
     lr: float = 0.01,
+    random: bool = False,
+    fix_scale: bool = False,
+    fix_position: bool = False,
+    fix_color: bool = False,
+    fix_quats: bool = False,
+    fix_opacities: bool = False
 ) -> None:
-    if img_path:
-        gt_image = image_path_to_tensor(img_path)
-    else:
-        gt_image = torch.ones((height, width, 3)) * 1.0
-        # make top left and bottom right red, blue
-        gt_image[: height // 2, : width // 2, :] = torch.tensor([1.0, 0.0, 0.0])
-        gt_image[height // 2 :, width // 2 :, :] = torch.tensor([0.0, 0.0, 1.0])
+    inputs = locals()
+    del inputs['img_path'], inputs['save_imgs'], inputs['experiment_label']
 
-    trainer = SimpleTrainer(gt_image=gt_image, num_points=num_points, random=True)
-    trainer.train(iterations=iterations, lr=lr, save_imgs=save_imgs)
+    wb.init(project="gsplat_image", name=experiment_label, config=inputs)
 
+    gt_image = image_path_to_tensor(img_path)
+    trainer = SimpleTrainer(gt_image=gt_image, num_points=num_points, random=random,
+                            fixScale=fix_scale, fixPosition=fix_position, fixColor=fix_color,
+                            fixQuats=fix_quats, fixOpacities=fix_opacities)
+    frames, losses = trainer.train(iterations=iterations, lr=lr, save_imgs=save_imgs)
+
+    wb.finish()
+
+def get_default_config():
+    return dict(experiment_label='default',
+                  num_points=100,
+                  save_imgs=True,
+                  img_path='input.jpg',
+                  iterations=1000,
+                  lr=0.01,
+                  random=True,
+                  fix_scale=False,
+                  fix_position=False,
+                  fix_color=False,
+                  fix_quats=False,
+                  fix_opacities=False)
+
+
+def run_experiment(new_fields):
+    _cfg = get_default_config()
+    for field, value in new_fields.items():
+        _cfg[field] = value
+    main(**_cfg)
+
+def RunExperiments():
+    for init in ['random', 'uniform']:
+        is_random = (init == 'random')
+        run_experiment(dict(experiment_label=f'{init}_init', random=is_random))
+        run_experiment(dict(experiment_label=f'{init}_fix_scale', random=is_random, fix_scale=True))
+        run_experiment(dict(experiment_label=f'{init}_fix_position', random=is_random, fix_position=True))
+        run_experiment(dict(experiment_label=f'{init}_fix_color', random=is_random, fix_color=True))
+        run_experiment(dict(experiment_label=f'{init}_fix_quats', random=is_random, fix_quats=True))
+        run_experiment(dict(experiment_label=f'{init}_fix_opacities', random=is_random, fix_opacities=True))
 
 if __name__ == "__main__":
-    tyro.cli(main)
+    # tyro.cli(main)
+    RunExperiments()
