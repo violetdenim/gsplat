@@ -16,11 +16,7 @@ from torch import Tensor, optim
 class SimpleTrainer:
     """Trains random gaussians to fit an image."""
 
-    def __init__(
-        self,
-        gt_image: Tensor,
-        num_points: int = 2000,
-    ):
+    def __init__(self, gt_image: Tensor, num_points: int = 2000):
         self.device = torch.device("cuda:0")
         self.gt_image = gt_image.to(device=self.device)
         self.num_points = num_points
@@ -139,18 +135,11 @@ class SimpleTrainer:
             os.makedirs(out_dir, exist_ok=True)
             frames[0].save(
                 f"{out_dir}/training.gif",
-                save_all=True,
-                append_images=frames[1:],
-                optimize=False,
-                duration=5,
-                loop=0,
+                save_all=True, append_images=frames[1:],
+                optimize=False, duration=5, loop=0,
             )
-        print(
-            f"Total(s):\nProject: {times[0]:.3f}, Rasterize: {times[1]:.3f}, Backward: {times[2]:.3f}"
-        )
-        print(
-            f"Per step(s):\nProject: {times[0]/iterations:.5f}, Rasterize: {times[1]/iterations:.5f}, Backward: {times[2]/iterations:.5f}"
-        )
+        print(f"Total(s):\nProject: {times[0]:.3f}, Rasterize: {times[1]:.3f}, Backward: {times[2]:.3f}")
+        print(f"Per step(s):\nProject: {times[0]/iterations:.5f}, Rasterize: {times[1]/iterations:.5f}, Backward: {times[2]/iterations:.5f}")
 
 
 def image_path_to_tensor(image_path: Path):

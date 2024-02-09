@@ -9,8 +9,12 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 # our library library
+# export CPATH=/usr/local/cuda-11.8/targets/x86_64-linux/include
 add_library(gsplat forward.cu backward.cu helpers.cuh)
-target_link_libraries(gsplat PUBLIC cuda)
+find_package(CUDAToolkit REQUIRED)
+include_directories("${CUDA_INCLUDE_DIRS}")
+#target_link_libraries(gsplat PUBLIC cuda)
+target_link_libraries(my_target PRIVATE CUDA::cudart CUDA::cuda_driver)
 target_include_directories(gsplat PRIVATE
     ${PROJECT_SOURCE_DIR}/third_party/glm
     ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}

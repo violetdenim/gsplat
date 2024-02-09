@@ -210,9 +210,7 @@ __global__ void nd_rasterize_forward(
         // Mahalanobis distance (here referred to as sigma) measures how many
         // standard deviations away distance delta is. sigma = -0.5(d.T * conic
         // * d)
-        const float sigma =
-            0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) +
-            conic.y * delta.x * delta.y;
+        const float sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
         if (sigma < 0.f) {
             continue;
         }
@@ -327,6 +325,9 @@ __global__ void rasterize_forward(
         // process gaussians in the current batch for this pixel
         int batch_size = min(BLOCK_SIZE, range.y - batch_start);
         for (int t = 0; (t < batch_size) && !done; ++t) {
+            // x - vertical direction
+            // y - upward (to the camera)
+            // z - horizontal direction
             const float3 conic = conic_batch[t];
             const float3 xy_opac = xy_opacity_batch[t];
             const float opac = xy_opac.z;
@@ -334,11 +335,17 @@ __global__ void rasterize_forward(
             const float sigma = 0.5f * (conic.x * delta.x * delta.x +
                                         conic.z * delta.y * delta.y) +
                                 conic.y * delta.x * delta.y;
-            const float alpha = min(0.999f, opac * __expf(-sigma));
-            if (sigma < 0.f || alpha < 1.f / 255.f) {
+            // 0.0 - full transparency
+            // 1.0 - opaque
+            const float _alpha = min(0.999f, opac * __expf(- sigma));
+            const float alpha = _alpha;//min(0.999f, opac * __expf(+ sigma));
+            // detect if we hit background
+            if (sigma < 0.f || _alpha < 1.f / 255.f) {
                 continue;
             }
 
+
+            // detect if current saturation is enough
             const float next_T = T * (1.f - alpha);
             if (next_T <= 1e-4f) { // this pixel is done
                 // we want to render the last gaussian that contributes and note
@@ -353,7 +360,7 @@ __global__ void rasterize_forward(
             pix_out.x = pix_out.x + c.x * vis;
             pix_out.y = pix_out.y + c.y * vis;
             pix_out.z = pix_out.z + c.z * vis;
-            T = next_T;
+            T = (1.0f - alpha) * T; //next_T;
             cur_idx = batch_start + t;
         }
     }

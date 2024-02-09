@@ -226,7 +226,7 @@ project_gaussians_backward_tensor(
 
     float4 intrins = {fx, fy, cx, cy};
 
-    const auto num_cov3d = num_points * 6;
+    //const auto num_cov3d = num_points * 6;
 
     // Triangular covariance.
     torch::Tensor v_cov2d =
